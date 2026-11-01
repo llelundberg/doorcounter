@@ -68,7 +68,6 @@
   .legend .l-set::before { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); }
 
   .links { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
-  a.btn { text-decoration: none; display: inline-block; }
 </style>
 </head>
 <body>
@@ -128,13 +127,14 @@
   <section class="card">
     <h2>Logg</h2>
     <div class="links">
-      <a class="btn" href="../api/log.csv"><button type="button">Ladda ner CSV</button></a>
+      <button id="csv-btn">Ladda ner CSV</button>
       <button id="archive-btn" class="secondary">Rensa logg och börja om</button>
     </div>
     <p class="hint">"Rensa logg" sparar undan den nuvarande loggen som en arkivfil på servern och startar en ny logg från 0. Använd det efter testkörning före evenemanget.</p>
   </section>
 </main>
 
+<script src="../connection.js"></script>
 <script>
 (function () {
   var state = { value: 0, capacity: 0 };
@@ -149,21 +149,29 @@
     return d.toLocaleDateString('sv-SE') + ' ' + fmtTime(iso);
   }
 
-  function post(url, body) {
-    return fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body || {}),
-    }).then(function (r) {
-      if (!r.ok) return r.json().then(function (j) { throw new Error(j.error || r.status); });
-      return r.json();
-    }).catch(function (e) { alert('Fel: ' + e.message); });
+  function send(msg, onOk) {
+    conn.request(msg).then(onOk, function (e) { alert('Fel: ' + e.message); });
   }
 
-  function loadLog() {
-    return fetch('../api/log', { cache: 'no-store' })
-      .then(function (r) { return r.json(); })
-      .then(function (data) { entries = data; renderStats(); drawChart(); });
+  // Redraw at most a few times per second during bursts of taps.
+  var redrawTimer;
+  function scheduleRedraw() {
+    clearTimeout(redrawTimer);
+    redrawTimer = setTimeout(function () { renderStats(); drawChart(); }, 300);
+  }
+
+  function downloadCsv() {
+    var rows = ['timestamp,action,delta,value,device'].concat(entries.map(function (e) {
+      return [e.timestamp, e.action, e.delta, e.value, e.device].join(',');
+    }));
+    var blob = new Blob([rows.join('\n') + '\n'], { type: 'text/csv;charset=utf-8' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'besokslogg-' + new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-') + '.csv';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
   }
 
   function renderNow() {
@@ -297,46 +305,47 @@
   }
 
   // Live updates
-  var es, reloadTimer;
-  function connect() {
-    if (es) es.close();
-    es = new EventSource('../api/events');
-    es.onopen = function () { $('conn').className = 'on'; $('conn-text').textContent = 'Ansluten'; };
-    es.onerror = function () {
-      $('conn').className = ''; $('conn-text').textContent = 'Ingen anslutning';
-      if (es.readyState === EventSource.CLOSED) setTimeout(connect, 2000);
-    };
-    es.onmessage = function (e) {
-      state = JSON.parse(e.data);
+  var conn = DoorCounter.connect('../api', {
+    onStatus: function (on) {
+      $('conn').className = on ? 'on' : '';
+      $('conn-text').textContent = on ? 'Ansluten' : 'Ingen anslutning';
+    },
+    onOpen: function () {
+      conn.request({ type: 'subscribeLog' }).catch(function () {});
+    },
+    onState: function (s) {
+      state = s;
       renderNow();
-      // Debounce log reloads during bursts of taps.
-      clearTimeout(reloadTimer);
-      reloadTimer = setTimeout(loadLog, 500);
-    };
-  }
+      scheduleRedraw();
+    },
+    onMessage: function (msg) {
+      if (msg.type === 'log') entries = msg.entries;
+      else if (msg.type === 'entry') entries.push(msg.entry);
+      else return;
+      scheduleRedraw();
+    },
+  });
 
   $('set-btn').onclick = function () {
     var n = parseInt($('set-input').value, 10);
     if (isNaN(n) || n < 0) return alert('Ange ett heltal ≥ 0');
-    if (confirm('Sätt räknaren till ' + n + '?')) post('../api/set', { value: n }).then(function () { $('set-input').value = ''; });
+    if (confirm('Sätt räknaren till ' + n + '?')) send({ type: 'set', value: n }, function () { $('set-input').value = ''; });
   };
   $('reset-btn').onclick = function () {
-    if (confirm('Nollställ räknaren till 0?')) post('../api/set', { value: 0 });
+    if (confirm('Nollställ räknaren till 0?')) send({ type: 'set', value: 0 });
   };
   $('cap-btn').onclick = function () {
     var n = parseInt($('cap-input').value, 10);
     if (isNaN(n) || n < 0) return alert('Ange ett heltal ≥ 0');
-    post('../api/capacity', { capacity: n }).then(function () { $('cap-input').value = ''; });
+    send({ type: 'capacity', capacity: n }, function () { $('cap-input').value = ''; });
   };
   $('archive-btn').onclick = function () {
-    if (confirm('Rensa loggen och nollställ räknaren?\nNuvarande logg sparas som arkivfil på servern.')) post('../api/archive');
+    if (confirm('Rensa loggen och nollställ räknaren?\nNuvarande logg sparas som arkivfil på servern.')) send({ type: 'archive' });
   };
+  $('csv-btn').onclick = downloadCsv;
 
   window.addEventListener('resize', drawChart);
   setInterval(drawChart, 30000); // keep the time axis moving when idle
-
-  connect();
-  loadLog();
 })();
 </script>
 </body>

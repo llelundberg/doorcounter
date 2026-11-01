@@ -9,28 +9,26 @@ A single shared people counter for a ~6-hour event. Door staff tap +/− on phon
 ## Commands
 
 ```sh
-node server.js                                  # http://localhost:3000/ and /admin/
-PORT=3123 DATA_DIR=/some/tmp/dir node server.js  # isolated test run (keeps ./data clean)
+npm install
+npm run dev                                              # node server.js --static: http://localhost:3000/ and /admin/
+PORT=3125 DATA_DIR=/some/tmp/dir node server.js --static  # isolated test run (keeps ./data clean)
 ```
 
-No build step, no npm dependencies, no test suite or linter. Verify changes by running the server and exercising the API with curl, e.g.:
-
-```sh
-curl -X POST -H 'Content-Type: application/json' -d '{"delta":1,"device":"x"}' localhost:3000/api/change
-```
+There is no build step, test suite or linter. Verify backend changes with a small Node script using the global `WebSocket` client against `ws://127.0.0.1:<port>/api`, and verify page changes in a browser.
 
 ## Architecture
 
-- **Backend (`server.js`)** uses only Node built-ins (`http`, `fs`, `path`). Keep it dependency-free. Config comes from env vars via `config.js` (`PORT`, `HOST` default 127.0.0.1, `DATA_DIR`).
+- **Split delivery.** Apache serves `public/` (static HTML plus the shared `connection.js`). `server.js` is only a WebSocket service at `/api`, proxied from `/doorcounter/api`. The `--static` flag (or `SERVE_STATIC=1`) makes Node serve `public/` too, but that's for local development only.
 - **The log is the single source of truth.** `data/log.csv` (`timestamp,action,delta,value,device`) is append-only. On startup `loadLog()` replays it to rebuild `state.value` and `state.capacity`; there is no separate state file. Actions: `inc`, `dec`, `set` (admin), and `capacity` (where `value` is the new limit, not the headcount). Anything that reads the log must treat `capacity` rows separately from count rows.
-- **All mutations go through `record()`.** It appends to the file synchronously, updates in-memory `entries`/`state`, then calls `broadcast()`. Correctness under concurrent taps relies on Node's single thread plus this synchronous path, so don't add `await` between reading `state.value` and calling `record()`.
-- **Live sync is Server-Sent Events** (`GET /api/events`), not WebSockets. Clients render only server-authoritative values (from SSE or the POST response), never optimistic local increments. The counter page disables its buttons whenever the SSE connection is down or a POST fails. This is deliberate: taps made offline are not queued.
-- **`POST /api/archive`** renames the log to `log-<timestamp>.csv` and starts fresh at 0, keeping the current capacity. It's meant for clearing test runs before the event.
-- **Frontend** is two self-contained HTML files with inline CSS and JS, using plain ES5-style JS and no libraries. The admin chart is hand-drawn on `<canvas>`.
+- **All mutations go through `record()`.** It appends to the file synchronously, updates in-memory `entries`/`state`, then broadcasts. Correctness under concurrent taps relies on Node's single thread plus this synchronous path, so don't add `await` between reading `state.value` and calling `record()`.
+- **WebSocket protocol** is documented in a comment block in `server.js`. Every client message carries an `id` and gets an `ack` (with the new state, or an error). All clients receive `state` broadcasts. The admin page sends `subscribeLog` to get the full log, then live `entry` messages. After `archive` it gets a fresh `log`.
+- **`public/connection.js`** handles reconnecting, acks and heartbeats for both pages. A request with no ack within 5 s tears the connection down, because a WebSocket can die silently on phones. The counter page disables its buttons whenever the connection is offline. This is deliberate: taps are never queued or resent, so they can't be lost unnoticed or counted twice. Pages render only server-authoritative values, never optimistic local increments.
+- **Frontend** is plain ES5-style JS with no libraries. The admin chart is hand-drawn on `<canvas>`, and the CSV is built in the browser from the received log.
 
 ## Constraints
 
-- **Relative URLs only** in `public/` (`api/...` on the counter page, `../api/...` in admin). The app is served under an Apache subpath, so absolute `/api` paths would break production. The server's directory redirect (`/admin` → `admin/`) is also relative for the same reason.
-- SSE through Apache needs `flushpackets=on` and no gzip (see `deploy/apache-counter.conf`). The server sends `X-Accel-Buffering: no` and a 15 s keep-alive ping; keep those if you touch `handleEvents`.
-- Deployment artifacts live in `deploy/`: a systemd unit and the Apache snippet. `README.md` has the install and update steps and the pre-event checklist.
-- Production is `ssh kalle@192.168.194.10` (Ubuntu, Node 22). The app is a git clone at `/srv/www/mumindalen/doorcounter`, runs as `kalle` on port 8083, and the Apache lines sit inline in the mumindalen.nu vhost in `/etc/apache2/sites-available/default.conf`. Ports 8081 and 8082 belong to other apps. sudo needs a password, so it can't be run non-interactively over ssh.
+- **Relative URLs only** in `public/` (`api` and `connection.js` on the counter page, `../api` and `../connection.js` in admin). The app is served under an Apache subpath. `connection.js` turns the relative path into a `ws:`/`wss:` URL.
+- Every WebSocket needs an `error` listener (`ws.on('error')` in `server.js`). Without one, a protocol error such as an oversized message crashes the whole server.
+- Deployment: `install-doorcounter.sh` is used both for the first install and for updates. It pulls, runs `npm ci`, restarts the service, and replaces the `# BEGIN doorcounter` … `# END doorcounter` block in the Apache vhost with the non-comment lines of `deploy/apache-counter.conf`. That config denies the whole app directory except `public/`, because the app lives inside the web root.
+- Production is `ssh kalle@192.168.194.10` (Ubuntu, Node 22, Apache 2.4 with proxy_wstunnel). The app is a git clone at `/srv/www/mumindalen/doorcounter` and runs as `kalle` on port 8083. Ports 8081 and 8082 belong to other apps. sudo needs a password, so the install script must be run by the user in an interactive terminal (`ssh -t`).
+- `.gitattributes` forces LF for `*.sh`, `*.service` and `*.conf`, because they run or are read on Linux.

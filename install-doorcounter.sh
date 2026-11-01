@@ -1,8 +1,14 @@
 #!/bin/bash
-# One-time install of DoorCounter on the production server.
+# Install or update DoorCounter on the production server.
 # Run as kalle (not with sudo; the script calls sudo itself). It is safe to re-run.
+#   ssh -t kalle@<server> /srv/www/mumindalen/doorcounter/install-doorcounter.sh
+# First install, before the clone exists:
 #   scp install-doorcounter.sh kalle@<server>: && ssh -t kalle@<server> ./install-doorcounter.sh
 set -euo pipefail
+
+# Braces make bash parse the whole script before running it, since step 1
+# may git pull a newer version of this file.
+{
 
 APP_USER=kalle
 APP=/srv/www/mumindalen/doorcounter
@@ -13,8 +19,9 @@ if [ "$(id -un)" != "$APP_USER" ]; then
   echo "Run as $APP_USER, not with sudo (the script calls sudo itself)"
   exit 1
 fi
+sudo -v
 
-echo "== 1. App directory and clone"
+echo "== 1. Code"
 if [ ! -d "$APP/.git" ]; then
   sudo install -d -o "$APP_USER" -g "$APP_USER" "$APP"
   git clone -q "$REPO" "$APP"
@@ -23,34 +30,46 @@ fi
 if [ -n "$(find "$APP" ! -user "$APP_USER" -print -quit)" ]; then
   sudo chown -R "$APP_USER:$APP_USER" "$APP"
 fi
+git -C "$APP" pull -q --ff-only
+git -C "$APP" log --oneline -1
 mkdir -p "$APP/data"
+(cd "$APP" && npm ci --omit=dev --no-audit --no-fund --loglevel=error)
 
 echo "== 2. systemd service"
 sudo cp "$APP/deploy/doorcounter.service" /etc/systemd/system/doorcounter.service
 sudo systemctl daemon-reload
-sudo systemctl enable doorcounter
+sudo systemctl enable -q doorcounter
 sudo systemctl restart doorcounter
 sleep 2
 systemctl is-active doorcounter
-curl -fsS http://127.0.0.1:8083/api/state; echo
 
 echo "== 3. Apache"
-if grep -q '/doorcounter/' "$CONF"; then
-  echo "Apache config already contains /doorcounter/, skipping edit"
+BACKUP="$CONF.bak-$(date +%Y%m%d-%H%M%S)"
+sudo cp "$CONF" "$BACKUP"
+BLOCK=$(mktemp)
+{
+  echo "    # BEGIN doorcounter"
+  grep -vE '^\s*(#|$)' "$APP/deploy/apache-counter.conf"
+  echo "    # END doorcounter"
+} > "$BLOCK"
+# Remove the previous block (and the unmarked lines from older versions),
+# then insert the current one after the simplevote lines.
+sudo sed -i -e '/# BEGIN doorcounter/,/# END doorcounter/d' -e '/doorcounter/d' "$CONF"
+sudo sed -i "\\|ProxyPassReverse \"/simplevote/\"|r $BLOCK" "$CONF"
+rm "$BLOCK"
+if sudo cmp -s "$CONF" "$BACKUP"; then
+  echo "Apache config unchanged"
+  sudo rm "$BACKUP"
 else
-  BACKUP="$CONF.bak-$(date +%Y%m%d-%H%M%S)"
-  sudo cp "$CONF" "$BACKUP"
-  echo "Backup: $BACKUP"
-  # Insert our lines (without comments) after the simplevote ProxyPassReverse line.
-  grep -vE '^\s*(#|$)' "$APP/deploy/apache-counter.conf" > /tmp/doorcounter-apache.txt
-  sudo sed -i '\|ProxyPassReverse "/simplevote/"|r /tmp/doorcounter-apache.txt' "$CONF"
-  rm /tmp/doorcounter-apache.txt
-  if ! grep -q '/doorcounter/' "$CONF" || ! sudo apachectl configtest; then
+  echo "Apache config updated, backup: $BACKUP"
+  if ! grep -q '# BEGIN doorcounter' "$CONF" || ! sudo apachectl configtest; then
     echo "Apache config failed - restoring backup"
     sudo cp "$BACKUP" "$CONF"
     exit 1
   fi
+  sudo systemctl reload apache2
 fi
-sudo systemctl reload apache2
 
 echo "== Done: /doorcounter/ is live"
+exit
+}

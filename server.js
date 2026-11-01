@@ -1,20 +1,11 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const { WebSocketServer } = require('ws');
 const config = require('./config');
 
 const LOG_FILE = path.join(config.dataDir, 'log.csv');
 const LOG_HEADER = 'timestamp,action,delta,value,device\n';
-
-const MIME = {
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
-  '.png': 'image/png',
-  '.svg': 'image/svg+xml',
-  '.ico': 'image/x-icon',
-};
 
 // ---------- State and log ----------
 
@@ -63,7 +54,8 @@ function record(action, delta, value, device) {
   entries.push(entry);
   if (action === 'capacity') state.capacity = value;
   else state.value = value;
-  broadcast();
+  broadcastState();
+  broadcastToLogSubscribers({ type: 'entry', entry });
 }
 
 function archiveLog() {
@@ -74,70 +66,143 @@ function archiveLog() {
   entries = [];
   state.value = 0;
   state.capacity = 0;
+  broadcastToLogSubscribers({ type: 'log', entries });
   // Keep the configured capacity in the fresh log.
   if (capacity) record('capacity', 0, capacity, 'admin');
-  else broadcast();
+  else broadcastState();
 }
 
-// ---------- Server-Sent Events ----------
-
-const clients = new Set();
-
-function broadcast() {
-  const msg = `data: ${JSON.stringify(state)}\n\n`;
-  for (const res of clients) res.write(msg);
-}
-
-function handleEvents(req, res) {
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache, no-transform',
-    Connection: 'keep-alive',
-    'X-Accel-Buffering': 'no',
-  });
-  res.write('retry: 2000\n\n');
-  res.write(`data: ${JSON.stringify(state)}\n\n`);
-  clients.add(res);
-  req.on('close', () => clients.delete(res));
-}
-
-setInterval(() => {
-  for (const res of clients) res.write(': ping\n\n');
-}, 15000);
-
-// ---------- HTTP helpers ----------
-
-function sendJson(res, status, obj) {
-  res.writeHead(status, { 'Content-Type': MIME['.json'], 'Cache-Control': 'no-store' });
-  res.end(JSON.stringify(obj));
-}
-
-function readJson(req) {
-  return new Promise((resolve, reject) => {
-    let body = '';
-    req.on('data', (chunk) => {
-      body += chunk;
-      if (body.length > 1024) {
-        reject(new Error('Body too large'));
-        req.destroy();
-      }
-    });
-    req.on('end', () => {
-      try {
-        resolve(body ? JSON.parse(body) : {});
-      } catch {
-        reject(new Error('Invalid JSON'));
-      }
-    });
-    req.on('error', reject);
-  });
-}
+// ---------- WebSocket protocol ----------
+//
+// Client -> server: { type, id, ... }. Every message with an id gets an ack:
+//   { type: 'ack', id, ok: true, state } or { type: 'ack', id, ok: false, error }
+//   change     { delta: 1 | -1, device }
+//   set        { value }          admin
+//   capacity   { capacity }       admin
+//   archive    {}                 admin
+//   subscribeLog {}               admin; server sends { type: 'log', entries }
+//                                 now and { type: 'entry', entry } on each change
+//   ping       {}                 heartbeat, just acked
+// Server -> all clients: { type: 'state', value, capacity } on connect and on every change.
 
 function isNonNegInt(n) {
   return Number.isInteger(n) && n >= 0 && n <= 1000000;
 }
 
-function serveStatic(req, res, pathname) {
+function send(ws, msg) {
+  if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));
+}
+
+function broadcastState() {
+  const msg = JSON.stringify({ type: 'state', ...state });
+  for (const ws of wss.clients) {
+    if (ws.readyState === ws.OPEN) ws.send(msg);
+  }
+}
+
+function broadcastToLogSubscribers(msg) {
+  for (const ws of wss.clients) {
+    if (ws.logSubscriber) send(ws, msg);
+  }
+}
+
+function handle(ws, msg) {
+  switch (msg.type) {
+    case 'change':
+      if (msg.delta !== 1 && msg.delta !== -1) return 'delta must be 1 or -1';
+      record(msg.delta > 0 ? 'inc' : 'dec', msg.delta, state.value + msg.delta, msg.device);
+      return null;
+
+    case 'set':
+      if (!isNonNegInt(msg.value)) return 'value must be a non-negative integer';
+      record('set', msg.value - state.value, msg.value, 'admin');
+      return null;
+
+    case 'capacity':
+      if (!isNonNegInt(msg.capacity)) return 'capacity must be a non-negative integer';
+      record('capacity', 0, msg.capacity, 'admin');
+      return null;
+
+    case 'archive':
+      archiveLog();
+      return null;
+
+    case 'subscribeLog':
+      ws.logSubscriber = true;
+      send(ws, { type: 'log', entries });
+      return null;
+
+    case 'ping':
+      return null;
+
+    default:
+      return 'unknown message type';
+  }
+}
+
+function onMessage(ws, data) {
+  let msg;
+  try {
+    msg = JSON.parse(data);
+  } catch {
+    return;
+  }
+  if (!msg || typeof msg !== 'object') return;
+  let error;
+  try {
+    error = handle(ws, msg);
+  } catch (err) {
+    console.error(err);
+    error = 'server error';
+  }
+  if (msg.id !== undefined) {
+    send(ws, error ? { type: 'ack', id: msg.id, ok: false, error } : { type: 'ack', id: msg.id, ok: true, state });
+  }
+}
+
+// ---------- Server ----------
+
+const server = http.createServer((req, res) => {
+  if (config.serveStatic && (req.method === 'GET' || req.method === 'HEAD')) {
+    return serveStatic(req, res);
+  }
+  res.writeHead(426, { 'Content-Type': 'text/plain' }).end('WebSocket only: connect to /api');
+});
+
+const wss = new WebSocketServer({ server, path: '/api', maxPayload: 1024 });
+
+wss.on('connection', (ws) => {
+  ws.isAlive = true;
+  ws.on('pong', () => { ws.isAlive = true; });
+  // Protocol errors (e.g. a message over maxPayload) close this socket;
+  // without a listener they would crash the whole server.
+  ws.on('error', (err) => console.warn('ws error:', err.message));
+  ws.on('message', (data) => onMessage(ws, data));
+  send(ws, { type: 'state', ...state });
+});
+
+// Drop connections that stopped answering pings; the traffic also keeps
+// Apache and mobile networks from closing idle connections.
+setInterval(() => {
+  for (const ws of wss.clients) {
+    if (!ws.isAlive) {
+      ws.terminate();
+      continue;
+    }
+    ws.isAlive = false;
+    ws.ping();
+  }
+}, 15000);
+
+// Local development only: in production Apache serves public/.
+const MIME = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+};
+
+function serveStatic(req, res) {
+  const { pathname } = new URL(req.url, 'http://localhost');
   let rel = decodeURIComponent(pathname);
   if (rel.endsWith('/')) rel += 'index.html';
   const file = path.normalize(path.join(config.publicDir, rel));
@@ -147,7 +212,6 @@ function serveStatic(req, res, pathname) {
   }
   fs.stat(file, (err, stat) => {
     if (!err && stat.isDirectory()) {
-      // /admin -> /admin/ so relative URLs resolve correctly
       res.writeHead(301, { Location: path.basename(pathname) + '/' }).end();
       return;
     }
@@ -163,76 +227,7 @@ function serveStatic(req, res, pathname) {
   });
 }
 
-// ---------- Routes ----------
-
-async function handleApi(req, res, pathname) {
-  const route = `${req.method} ${pathname}`;
-  switch (route) {
-    case 'GET /api/state':
-      return sendJson(res, 200, state);
-
-    case 'GET /api/events':
-      return handleEvents(req, res);
-
-    case 'GET /api/log':
-      return sendJson(res, 200, entries);
-
-    case 'GET /api/log.csv': {
-      const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
-      res.writeHead(200, {
-        'Content-Type': 'text/csv; charset=utf-8',
-        'Content-Disposition': `attachment; filename="besokslogg-${stamp}.csv"`,
-        'Cache-Control': 'no-store',
-      });
-      return fs.createReadStream(LOG_FILE).pipe(res);
-    }
-
-    case 'POST /api/change': {
-      const body = await readJson(req);
-      if (body.delta !== 1 && body.delta !== -1) return sendJson(res, 400, { error: 'delta must be 1 or -1' });
-      record(body.delta > 0 ? 'inc' : 'dec', body.delta, state.value + body.delta, body.device);
-      return sendJson(res, 200, state);
-    }
-
-    case 'POST /api/set': {
-      const body = await readJson(req);
-      if (!isNonNegInt(body.value)) return sendJson(res, 400, { error: 'value must be a non-negative integer' });
-      record('set', body.value - state.value, body.value, 'admin');
-      return sendJson(res, 200, state);
-    }
-
-    case 'POST /api/capacity': {
-      const body = await readJson(req);
-      if (!isNonNegInt(body.capacity)) return sendJson(res, 400, { error: 'capacity must be a non-negative integer' });
-      record('capacity', 0, body.capacity, 'admin');
-      return sendJson(res, 200, state);
-    }
-
-    case 'POST /api/archive':
-      archiveLog();
-      return sendJson(res, 200, state);
-
-    default:
-      return sendJson(res, 404, { error: 'Not found' });
-  }
-}
-
-const server = http.createServer(async (req, res) => {
-  const { pathname } = new URL(req.url, 'http://localhost');
-  try {
-    if (pathname.startsWith('/api/')) {
-      await handleApi(req, res, pathname);
-    } else if (req.method === 'GET' || req.method === 'HEAD') {
-      serveStatic(req, res, pathname);
-    } else {
-      res.writeHead(405).end();
-    }
-  } catch (err) {
-    if (!res.headersSent) sendJson(res, 400, { error: err.message });
-  }
-});
-
 loadLog();
 server.listen(config.port, config.host, () => {
-  console.log(`DoorCounter listening on http://${config.host}:${config.port} (value=${state.value}, capacity=${state.capacity})`);
+  console.log(`DoorCounter listening on ws://${config.host}:${config.port}/api${config.serveStatic ? ' (serving public/)' : ''} (value=${state.value}, capacity=${state.capacity})`);
 });

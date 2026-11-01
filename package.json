@@ -1,0 +1,17 @@
+{
+  "name": "doorcounter",
+  "version": "1.0.0",
+  "description": "Shared people counter for events",
+  "main": "server.js",
+  "private": true,
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js --static"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
