@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Besöksräknare – Admin</title>
+<style>
+  :root {
+    --bg: #f4f5f7;
+    --card: #fff;
+    --fg: #1a1d21;
+    --muted: #6b7280;
+    --line: #e5e7eb;
+    --accent: #2563eb;
+    --danger: #c53030;
+    --warn: #f59e0b;
+    --ok: #16a34a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: 16px;
+  }
+  main { max-width: 960px; margin: 0 auto; padding: 16px; display: grid; gap: 16px; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  h1 { font-size: 22px; margin: 0; }
+  h2 { font-size: 16px; margin: 0 0 12px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+  #conn { font-size: 14px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  #conn .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--danger); }
+  #conn.on .dot { background: var(--ok); }
+
+  .now { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  #value { font-size: 64px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1; }
+  #value.warn { color: var(--warn); }
+  #value.full { color: var(--danger); }
+  #capinfo { color: var(--muted); }
+
+  .controls { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+  .row { display: flex; gap: 8px; }
+  input[type=number] {
+    flex: 1; min-width: 0;
+    font: inherit; padding: 10px 12px;
+    border: 1px solid var(--line); border-radius: 8px;
+  }
+  button {
+    font: inherit; font-weight: 600;
+    padding: 10px 16px; border: 0; border-radius: 8px;
+    background: var(--accent); color: #fff; cursor: pointer;
+  }
+  button.danger { background: var(--danger); }
+  button.secondary { background: var(--line); color: var(--fg); }
+  .hint { font-size: 13px; color: var(--muted); margin: 6px 0 0; }
+
+  .stats { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
+  .stat .k { font-size: 13px; color: var(--muted); }
+  .stat .v { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .stat .s { font-size: 13px; color: var(--muted); }
+
+  .chart-wrap { position: relative; height: 340px; }
+  canvas { width: 100%; height: 100%; display: block; }
+  .legend { display: flex; gap: 16px; font-size: 13px; color: var(--muted); margin-top: 8px; flex-wrap: wrap; }
+  .legend span::before { content: ""; display: inline-block; width: 14px; height: 3px; vertical-align: middle; margin-right: 6px; background: var(--accent); }
+  .legend .l-cap::before { background: var(--danger); height: 0; border-top: 2px dashed var(--danger); }
+  .legend .l-set::before { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); }
+
+  .links { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+  a.btn { text-decoration: none; display: inline-block; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Besöksräknare – Admin</h1>
+    <div id="conn"><span class="dot"></span><span id="conn-text">Ansluter…</span></div>
+  </header>
+
+  <section class="card">
+    <h2>Just nu</h2>
+    <div class="now">
+      <div id="value">–</div>
+      <div id="capinfo"></div>
+    </div>
+  </section>
+
+  <section class="card controls">
+    <div>
+      <h2>Sätt värde</h2>
+      <div class="row">
+        <input type="number" id="set-input" min="0" step="1" inputmode="numeric" placeholder="Antal">
+        <button id="set-btn">Sätt värde</button>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button id="reset-btn" class="danger">Nollställ till 0</button>
+      </div>
+    </div>
+    <div>
+      <h2>Maxkapacitet</h2>
+      <div class="row">
+        <input type="number" id="cap-input" min="0" step="1" inputmode="numeric" placeholder="0 = ingen gräns">
+        <button id="cap-btn">Spara</button>
+      </div>
+      <p class="hint">Räknaren blir orange vid 90 % och röd vid full kapacitet. 0 = ingen gräns.</p>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Sammanfattning</h2>
+    <div class="stats">
+      <div class="stat"><div class="k">Max samtidigt</div><div class="v" id="st-peak">–</div><div class="s" id="st-peak-at"></div></div>
+      <div class="stat"><div class="k">Totalt in</div><div class="v" id="st-in">–</div></div>
+      <div class="stat"><div class="k">Totalt ut</div><div class="v" id="st-out">–</div></div>
+      <div class="stat"><div class="k">Manuella ändringar</div><div class="v" id="st-set">–</div></div>
+      <div class="stat"><div class="k">Första händelse</div><div class="v" id="st-first" style="font-size:18px">–</div></div>
+      <div class="stat"><div class="k">Senaste händelse</div><div class="v" id="st-last" style="font-size:18px">–</div></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Antal inne över tid</h2>
+    <div class="chart-wrap"><canvas id="chart"></canvas></div>
+    <div class="legend"><span>Antal inne</span><span class="l-cap">Maxkapacitet</span><span class="l-set">Manuell ändring</span></div>
+  </section>
+
+  <section class="card">
+    <h2>Logg</h2>
+    <div class="links">
+      <a class="btn" href="../api/log.csv"><button type="button">Ladda ner CSV</button></a>
+      <button id="archive-btn" class="secondary">Rensa logg och börja om</button>
+    </div>
+    <p class="hint">"Rensa logg" sparar undan den nuvarande loggen som en arkivfil på servern och startar en ny logg från 0. Använd det efter testkörning före evenemanget.</p>
+  </section>
+</main>
+
+<script>
+(function () {
+  var state = { value: 0, capacity: 0 };
+  var entries = [];
+  var $ = function (id) { return document.getElementById(id); };
+
+  function fmtTime(iso) {
+    return new Date(iso).toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  }
+  function fmtDateTime(iso) {
+    var d = new Date(iso);
+    return d.toLocaleDateString('sv-SE') + ' ' + fmtTime(iso);
+  }
+
+  function post(url, body) {
+    return fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {}),
+    }).then(function (r) {
+      if (!r.ok) return r.json().then(function (j) { throw new Error(j.error || r.status); });
+      return r.json();
+    }).catch(function (e) { alert('Fel: ' + e.message); });
+  }
+
+  function loadLog() {
+    return fetch('../api/log', { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(function (data) { entries = data; renderStats(); drawChart(); });
+  }
+
+  function renderNow() {
+    var v = $('value');
+    v.textContent = state.value;
+    v.className = '';
+    if (state.capacity > 0) {
+      if (state.value >= state.capacity) v.className = 'full';
+      else if (state.value >= state.capacity * 0.9) v.className = 'warn';
+      $('capinfo').textContent = 'av max ' + state.capacity + ' (' + Math.round(100 * state.value / state.capacity) + ' %)';
+    } else {
+      $('capinfo').textContent = 'personer inne (ingen maxgräns)';
+    }
+  }
+
+  function counts() {
+    return entries.filter(function (e) { return e.action !== 'capacity'; });
+  }
+
+  function renderStats() {
+    var list = counts();
+    var peak = null, inn = 0, out = 0, sets = 0;
+    list.forEach(function (e) {
+      if (e.action === 'inc') inn++;
+      else if (e.action === 'dec') out++;
+      else if (e.action === 'set') sets++;
+      if (!peak || e.value > peak.value) peak = e;
+    });
+    $('st-peak').textContent = peak ? peak.value : '–';
+    $('st-peak-at').textContent = peak ? 'kl. ' + fmtTime(peak.timestamp) : '';
+    $('st-in').textContent = inn;
+    $('st-out').textContent = out;
+    $('st-set').textContent = sets;
+    $('st-first').textContent = entries.length ? fmtDateTime(entries[0].timestamp) : '–';
+    $('st-last').textContent = entries.length ? fmtDateTime(entries[entries.length - 1].timestamp) : '–';
+  }
+
+  function niceStep(range, target) {
+    var raw = range / target;
+    var mag = Math.pow(10, Math.floor(Math.log10(raw)));
+    var n = raw / mag;
+    return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10) * mag;
+  }
+
+  function drawChart() {
+    var canvas = $('chart');
+    var dpr = window.devicePixelRatio || 1;
+    var W = canvas.clientWidth, H = canvas.clientHeight;
+    canvas.width = W * dpr; canvas.height = H * dpr;
+    var ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+
+    var css = getComputedStyle(document.documentElement);
+    var cAccent = css.getPropertyValue('--accent').trim();
+    var cDanger = css.getPropertyValue('--danger').trim();
+    var cWarn = css.getPropertyValue('--warn').trim();
+    var cLine = css.getPropertyValue('--line').trim();
+    var cMuted = css.getPropertyValue('--muted').trim();
+
+    var list = counts();
+    ctx.font = '12px system-ui, sans-serif';
+    if (!list.length) {
+      ctx.fillStyle = cMuted;
+      ctx.textAlign = 'center';
+      ctx.fillText('Inga händelser ännu', W / 2, H / 2);
+      return;
+    }
+
+    // Build step points; start at 0 just before the first event and extend to now.
+    var pts = [];
+    var t0 = new Date(list[0].timestamp).getTime();
+    pts.push({ t: t0, v: 0 });
+    list.forEach(function (e) { pts.push({ t: new Date(e.timestamp).getTime(), v: e.value, set: e.action === 'set' }); });
+    var tEnd = Math.max(Date.now(), pts[pts.length - 1].t);
+    if (tEnd - t0 < 60000) tEnd = t0 + 60000;
+
+    var maxV = Math.max.apply(null, pts.map(function (p) { return p.v; }).concat([state.capacity || 0, 5]));
+    var minV = Math.min.apply(null, pts.map(function (p) { return p.v; }).concat([0]));
+    var yStep = niceStep(maxV - minV, 5);
+    var yMax = Math.ceil(maxV * 1.05 / yStep) * yStep;
+    var yMin = Math.floor(minV / yStep) * yStep;
+
+    var padL = 44, padR = 12, padT = 10, padB = 28;
+    var pw = W - padL - padR, ph = H - padT - padB;
+    function x(t) { return padL + (t - t0) / (tEnd - t0) * pw; }
+    function y(v) { return padT + ph - (v - yMin) / (yMax - yMin) * ph; }
+
+    // Y grid
+    ctx.strokeStyle = cLine; ctx.fillStyle = cMuted; ctx.lineWidth = 1;
+    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    for (var v = yMin; v <= yMax + 1e-9; v += yStep) {
+      ctx.beginPath(); ctx.moveTo(padL, y(v)); ctx.lineTo(W - padR, y(v)); ctx.stroke();
+      ctx.fillText(String(Math.round(v)), padL - 6, y(v));
+    }
+
+    // X labels: pick a step of 5/10/15/30/60/120 minutes
+    var spanMin = (tEnd - t0) / 60000;
+    var steps = [1, 2, 5, 10, 15, 30, 60, 120];
+    var xStep = steps.find(function (s) { return spanMin / s <= Math.max(3, Math.floor(pw / 80)); }) || 120;
+    var stepMs = xStep * 60000;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    for (var t = Math.ceil(t0 / stepMs) * stepMs; t <= tEnd; t += stepMs) {
+      ctx.fillText(new Date(t).toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit' }), x(t), padT + ph + 8);
+    }
+
+    // Capacity line
+    if (state.capacity > 0) {
+      ctx.strokeStyle = cDanger; ctx.setLineDash([6, 4]); ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(padL, y(state.capacity)); ctx.lineTo(W - padR, y(state.capacity)); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // Step line
+    ctx.strokeStyle = cAccent; ctx.lineWidth = 2; ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(x(pts[0].t), y(pts[0].v));
+    for (var i = 1; i < pts.length; i++) {
+      ctx.lineTo(x(pts[i].t), y(pts[i - 1].v));
+      ctx.lineTo(x(pts[i].t), y(pts[i].v));
+    }
+    ctx.lineTo(x(tEnd), y(pts[pts.length - 1].v));
+    ctx.stroke();
+
+    // Manual set markers
+    ctx.fillStyle = cWarn;
+    pts.forEach(function (p) {
+      if (!p.set) return;
+      ctx.beginPath(); ctx.arc(x(p.t), y(p.v), 4, 0, Math.PI * 2); ctx.fill();
+    });
+  }
+
+  // Live updates
+  var es, reloadTimer;
+  function connect() {
+    if (es) es.close();
+    es = new EventSource('../api/events');
+    es.onopen = function () { $('conn').className = 'on'; $('conn-text').textContent = 'Ansluten'; };
+    es.onerror = function () {
+      $('conn').className = ''; $('conn-text').textContent = 'Ingen anslutning';
+      if (es.readyState === EventSource.CLOSED) setTimeout(connect, 2000);
+    };
+    es.onmessage = function (e) {
+      state = JSON.parse(e.data);
+      renderNow();
+      // Debounce log reloads during bursts of taps.
+      clearTimeout(reloadTimer);
+      reloadTimer = setTimeout(loadLog, 500);
+    };
+  }
+
+  $('set-btn').onclick = function () {
+    var n = parseInt($('set-input').value, 10);
+    if (isNaN(n) || n < 0) return alert('Ange ett heltal ≥ 0');
+    if (confirm('Sätt räknaren till ' + n + '?')) post('../api/set', { value: n }).then(function () { $('set-input').value = ''; });
+  };
+  $('reset-btn').onclick = function () {
+    if (confirm('Nollställ räknaren till 0?')) post('../api/set', { value: 0 });
+  };
+  $('cap-btn').onclick = function () {
+    var n = parseInt($('cap-input').value, 10);
+    if (isNaN(n) || n < 0) return alert('Ange ett heltal ≥ 0');
+    post('../api/capacity', { capacity: n }).then(function () { $('cap-input').value = ''; });
+  };
+  $('archive-btn').onclick = function () {
+    if (confirm('Rensa loggen och nollställ räknaren?\nNuvarande logg sparas som arkivfil på servern.')) post('../api/archive');
+  };
+
+  window.addEventListener('resize', drawChart);
+  setInterval(drawChart, 30000); // keep the time axis moving when idle
+
+  connect();
+  loadLog();
+})();
+</script>
+</body>
+</html>

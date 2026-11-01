@@ -1,0 +1,17 @@
+[Unit]
+Description=DoorCounter - shared people counter
+After=network.target
+
+[Service]
+Type=simple
+User=doorcounter
+Group=doorcounter
+WorkingDirectory=/opt/doorcounter
+ExecStart=/usr/bin/node /opt/doorcounter/server.js
+Environment=PORT=3000
+Environment=HOST=127.0.0.1
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
