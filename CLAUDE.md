@@ -9,16 +9,16 @@ A single shared people counter for a ~6-hour event. Door staff tap +/− on phon
 ## Commands
 
 ```sh
-npm install
-npm run dev                                              # node server.js --static: http://localhost:3000/ and /admin/
-PORT=3125 DATA_DIR=/some/tmp/dir node server.js --static  # isolated test run (keeps ./data clean)
+cd server && npm install
+npm run dev                                              # (in server/) node server.js --static: http://localhost:3000/ and /admin/
+PORT=3125 DATA_DIR=/some/tmp/dir node server/server.js --static  # isolated test run (keeps ./data clean)
 ```
 
 There is no build step, test suite or linter. Verify backend changes with a small Node script using the global `WebSocket` client against `ws://127.0.0.1:<port>/api`, and verify page changes in a browser.
 
 ## Architecture
 
-- **Split delivery.** The pages (`index.html`, `admin/index.html` and the shared `connection.js`) are in the repo root. The repo is cloned into the Apache web root, so Apache serves them as plain files at `/doorcounter/`. `server.js` is only a WebSocket service at `/api`, proxied from `/doorcounter/api` by a single `ProxyPass` line. The `--static` flag (or `SERVE_STATIC=1`) makes Node serve the pages too (only the files listed in `PAGES`), but that's for local development only.
+- **Split delivery.** The pages (`index.html`, `admin/index.html` and the shared `connection.js`) are in the repo root. The repo is cloned into the Apache web root, so Apache serves them as plain files at `/doorcounter/`. The Node backend lives in `server/` (`server.js`, `config.js`, `package.json`), but its data stays in `data/` in the app root (`config.appDir`). `server.js` is only a WebSocket service at `/api`, proxied from `/doorcounter/api` by a single `ProxyPass` line. The `--static` flag (or `SERVE_STATIC=1`) makes Node serve the pages too (only the files listed in `PAGES`), but that's for local development only.
 - **The log is the single source of truth.** `data/log.csv` (`timestamp,action,delta,value,device`) is append-only. On startup `loadLog()` replays it to rebuild `state.value` and `state.capacity`; there is no separate state file. Actions: `inc`, `dec`, `set` (admin), and `capacity` (where `value` is the new limit, not the headcount). Anything that reads the log must treat `capacity` rows separately from count rows.
 - **All mutations go through `record()`.** It appends to the file synchronously, updates in-memory `entries`/`state`, then broadcasts. Correctness under concurrent taps relies on Node's single thread plus this synchronous path, so don't add `await` between reading `state.value` and calling `record()`.
 - **WebSocket protocol** is documented in a comment block in `server.js`. Every client message carries an `id` and gets an `ack` (with the new state, or an error). All clients receive `state` broadcasts. The admin page sends `subscribeLog` to get the full log, then live `entry` messages. After `archive` it gets a fresh `log`.
@@ -29,7 +29,7 @@ There is no build step, test suite or linter. Verify backend changes with a smal
 
 - **Relative URLs only** in the pages (`api` and `connection.js` on the counter page, `../api` and `../connection.js` in admin). The app is served under an Apache subpath. `connection.js` turns the relative path into a `ws:`/`wss:` URL.
 - Every WebSocket needs an `error` listener (`ws.on('error')` in `server.js`). Without one, a protocol error such as an oversized message crashes the whole server.
-- **`.htaccess` is what keeps the server code and data private.** The whole repo lies inside the web root, and `.htaccess` returns 404 for `.git`, `*.md`, `*.sh`, `data/`, `deploy/`, `node_modules/`, `server.js`, `config.js` and `package*.json`. Any new non-public file or folder in the repo root must be added there. It uses `RedirectMatch` because the vhost's `AllowOverride` allows only `Limit Options FileInfo`, so `Require` doesn't work in `.htaccess`.
-- Deployment: `install-doorcounter.sh` is used both for the first install and for updates. It pulls, runs `npm ci`, restarts the service, and replaces every line containing `doorcounter` in the Apache vhost with the non-comment line(s) of `deploy/apache-counter.conf`.
+- **`.htaccess` is what keeps the server code and data private.** The whole repo lies inside the web root, and `.htaccess` returns 404 for `.git`, `*.md`, `.gitignore`/`.gitattributes`, `data/`, `deploy/`, `server/` and `node_modules/`. Any new non-public file or folder in the repo root must be added there. It uses `RedirectMatch` because the vhost's `AllowOverride` allows only `Limit Options FileInfo`, so `Require` doesn't work in `.htaccess`.
+- Deployment: `deploy/install-doorcounter.sh` is used both for the first install and for updates. It pulls, runs `npm ci` in `server/`, restarts the service, and replaces every line containing `doorcounter` in the Apache vhost with the non-comment line(s) of `deploy/apache-counter.conf`.
 - Production is `ssh kalle@192.168.194.10` (Ubuntu, Node 22, Apache 2.4 with proxy_wstunnel). The app is a git clone at `/srv/www/mumindalen/doorcounter` and runs as `kalle` on port 8083. Ports 8081 and 8082 belong to other apps. sudo needs a password, so the install script must be run by the user in an interactive terminal (`ssh -t`).
 - `.gitattributes` forces LF for `*.sh`, `*.service` and `*.conf`, because they run or are read on Linux.

@@ -1,9 +1,9 @@
 #!/bin/bash
 # Install or update DoorCounter on the production server.
 # Run as kalle (not with sudo; the script calls sudo itself). It is safe to re-run.
-#   ssh -t kalle@<server> /srv/www/mumindalen/doorcounter/install-doorcounter.sh
+#   ssh -t kalle@<server> /srv/www/mumindalen/doorcounter/deploy/install-doorcounter.sh
 # First install, before the clone exists:
-#   scp install-doorcounter.sh kalle@<server>: && ssh -t kalle@<server> ./install-doorcounter.sh
+#   scp deploy/install-doorcounter.sh kalle@<server>: && ssh -t kalle@<server> ./install-doorcounter.sh
 set -euo pipefail
 
 # Braces make bash parse the whole script before running it, since step 1
@@ -33,7 +33,9 @@ fi
 git -C "$APP" pull -q --ff-only
 git -C "$APP" log --oneline -1
 mkdir -p "$APP/data"
-(cd "$APP" && npm ci --omit=dev --no-audit --no-fund --loglevel=error)
+# Older versions had the Node code (and node_modules) in the app root.
+if [ ! -f "$APP/package.json" ]; then rm -rf "$APP/node_modules"; fi
+(cd "$APP/server" && npm ci --omit=dev --no-audit --no-fund --loglevel=error)
 
 echo "== 2. systemd service"
 sudo cp "$APP/deploy/doorcounter.service" /etc/systemd/system/doorcounter.service

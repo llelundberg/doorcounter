@@ -219,7 +219,7 @@ function serveStatic(req, res) {
     'Content-Type': page.endsWith('.js') ? 'text/javascript; charset=utf-8' : 'text/html; charset=utf-8',
     'Cache-Control': 'no-cache',
   });
-  fs.createReadStream(path.join(__dirname, page)).pipe(res);
+  fs.createReadStream(path.join(config.appDir, page)).pipe(res);
 }
 
 loadLog();

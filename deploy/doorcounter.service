@@ -3,8 +3,8 @@ Description=DoorCounter - shared people counter
 After=network.target
 
 [Service]
-ExecStart=/usr/bin/node /srv/www/mumindalen/doorcounter/server.js
-WorkingDirectory=/srv/www/mumindalen/doorcounter
+ExecStart=/usr/bin/node /srv/www/mumindalen/doorcounter/server/server.js
+WorkingDirectory=/srv/www/mumindalen/doorcounter/server
 User=kalle
 Environment=PORT=8083
 Environment=HOST=127.0.0.1

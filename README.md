@@ -8,13 +8,14 @@ A shared people counter for an event. Door staff open the counter page on their 
 ## How it fits together
 
 - The pages are in the repo root: `index.html` (counter), `admin/index.html` and the shared `connection.js`. In production the repo is cloned into the web root, and Apache serves the pages directly.
-- `server.js` is a Node WebSocket service at `/api` (`/doorcounter/api` through Apache). It holds the counter, writes the log and pushes every change to all connected devices. It does not serve the pages in production.
+- `server/` holds the Node backend, a WebSocket service at `/api` (`/doorcounter/api` through Apache). It holds the counter, writes the log and pushes every change to all connected devices. It does not serve the pages in production.
 
 Needs Node.js 18 or later. The only dependency is `ws`.
 
 ## Run locally
 
 ```sh
+cd server
 npm install
 npm run dev        # node server.js --static
 ```
@@ -47,13 +48,13 @@ On the admin page, **Rensa logg** renames the current log to `data/log-<time>.cs
 
 Production: `ssh kalle@192.168.194.10`. The app lives in `/srv/www/mumindalen/doorcounter` and the backend runs as user `kalle` on port 8083, the same way as simplevote (8082) and triangelspelet (8081).
 
-`install-doorcounter.sh` does both the first install and every update. It runs `git pull` and `npm ci`, installs and restarts the systemd service, and writes the Apache lines from `deploy/apache-counter.conf` into the mumindalen.nu vhost. Run it as `kalle`, not with sudo, from a terminal where you can type the sudo password:
+`deploy/install-doorcounter.sh` does both the first install and every update. It runs `git pull` and `npm ci`, installs and restarts the systemd service, and writes the Apache lines from `deploy/apache-counter.conf` into the mumindalen.nu vhost. Run it as `kalle`, not with sudo, from a terminal where you can type the sudo password:
 
 ```sh
-ssh -t kalle@192.168.194.10 /srv/www/mumindalen/doorcounter/install-doorcounter.sh
+ssh -t kalle@192.168.194.10 /srv/www/mumindalen/doorcounter/deploy/install-doorcounter.sh
 ```
 
-The Apache vhost needs only one line, the WebSocket proxy (`deploy/apache-counter.conf`). The app directory lies in the web root, so `.htaccess` returns 404 for everything that isn't a page: `.git`, `*.md`, `data/`, `server.js`, `node_modules/` and so on. If you add a non-public file to the repo root, add it to `.htaccess` too.
+The Apache vhost needs only one line, the WebSocket proxy (`deploy/apache-counter.conf`). The app directory lies in the web root, so `.htaccess` returns 404 for everything that isn't a page: `.git`, `*.md`, `data/`, `deploy/` and `server/`. If you add a non-public file to the repo root, add it to `.htaccess` too.
 
 The counter value survives restarts, because the server rebuilds it from `data/log.csv`. Phones reconnect within a few seconds.
 
