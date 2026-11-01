@@ -194,40 +194,35 @@ setInterval(() => {
   }
 }, 15000);
 
-// Local development only: in production Apache serves public/.
-const MIME = {
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
+// Local development only: in production Apache serves the pages. The app root
+// also holds the server code and data, so only these files are served.
+const PAGES = {
+  '/': 'index.html',
+  '/index.html': 'index.html',
+  '/connection.js': 'connection.js',
+  '/admin/': 'admin/index.html',
+  '/admin/index.html': 'admin/index.html',
 };
 
 function serveStatic(req, res) {
   const { pathname } = new URL(req.url, 'http://localhost');
-  let rel = decodeURIComponent(pathname);
-  if (rel.endsWith('/')) rel += 'index.html';
-  const file = path.normalize(path.join(config.publicDir, rel));
-  if (!file.startsWith(config.publicDir + path.sep)) {
-    res.writeHead(403).end();
+  if (pathname === '/admin') {
+    res.writeHead(301, { Location: 'admin/' }).end();
     return;
   }
-  fs.stat(file, (err, stat) => {
-    if (!err && stat.isDirectory()) {
-      res.writeHead(301, { Location: path.basename(pathname) + '/' }).end();
-      return;
-    }
-    if (err) {
-      res.writeHead(404, { 'Content-Type': 'text/plain' }).end('Not found');
-      return;
-    }
-    res.writeHead(200, {
-      'Content-Type': MIME[path.extname(file)] || 'application/octet-stream',
-      'Cache-Control': 'no-cache',
-    });
-    fs.createReadStream(file).pipe(res);
+  const page = PAGES[pathname];
+  if (!page) {
+    res.writeHead(404, { 'Content-Type': 'text/plain' }).end('Not found');
+    return;
+  }
+  res.writeHead(200, {
+    'Content-Type': page.endsWith('.js') ? 'text/javascript; charset=utf-8' : 'text/html; charset=utf-8',
+    'Cache-Control': 'no-cache',
   });
+  fs.createReadStream(path.join(__dirname, page)).pipe(res);
 }
 
 loadLog();
 server.listen(config.port, config.host, () => {
-  console.log(`DoorCounter listening on ws://${config.host}:${config.port}/api${config.serveStatic ? ' (serving public/)' : ''} (value=${state.value}, capacity=${state.capacity})`);
+  console.log(`DoorCounter listening on ws://${config.host}:${config.port}/api${config.serveStatic ? ' (serving pages)' : ''} (value=${state.value}, capacity=${state.capacity})`);
 });

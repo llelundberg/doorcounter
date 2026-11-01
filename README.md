@@ -7,7 +7,7 @@ A shared people counter for an event. Door staff open the counter page on their 
 
 ## How it fits together
 
-- `public/` holds the static pages (counter, admin and the shared `connection.js`). In production Apache serves them directly.
+- The pages are in the repo root: `index.html` (counter), `admin/index.html` and the shared `connection.js`. In production the repo is cloned into the web root, and Apache serves the pages directly.
 - `server.js` is a Node WebSocket service at `/api` (`/doorcounter/api` through Apache). It holds the counter, writes the log and pushes every change to all connected devices. It does not serve the pages in production.
 
 Needs Node.js 18 or later. The only dependency is `ws`.
@@ -19,7 +19,7 @@ npm install
 npm run dev        # node server.js --static
 ```
 
-Open http://localhost:3000/ (counter) and http://localhost:3000/admin/ (admin). The `--static` flag makes Node serve `public/` as well, standing in for Apache.
+Open http://localhost:3000/ (counter) and http://localhost:3000/admin/ (admin). The `--static` flag makes Node serve the pages as well, standing in for Apache.
 
 Settings are read from environment variables: `PORT` (default 3000), `HOST` (default 127.0.0.1) and `DATA_DIR` (default `./data`).
 
@@ -53,7 +53,7 @@ Production: `ssh kalle@192.168.194.10`. The app lives in `/srv/www/mumindalen/do
 ssh -t kalle@192.168.194.10 /srv/www/mumindalen/doorcounter/install-doorcounter.sh
 ```
 
-Apache serves only `public/`; the rest of the app directory (server code, `data/`, `.git`) is denied, even though it lies in the web root.
+The Apache vhost needs only one line, the WebSocket proxy (`deploy/apache-counter.conf`). The app directory lies in the web root, so `.htaccess` returns 404 for everything that isn't a page: `.git`, `*.md`, `data/`, `server.js`, `node_modules/` and so on. If you add a non-public file to the repo root, add it to `.htaccess` too.
 
 The counter value survives restarts, because the server rebuilds it from `data/log.csv`. Phones reconnect within a few seconds.
 

@@ -1,0 +1,12 @@
+# The app directory is inside the web root. Apache serves only the pages
+# (index.html, admin/, connection.js); everything else returns 404.
+RedirectMatch 404 /\.git
+RedirectMatch 404 \.md$
+RedirectMatch 404 /\.(gitignore|gitattributes)$
+RedirectMatch 404 /(data|deploy|node_modules)(/|$)
+RedirectMatch 404 /(server|config)\.js$
+RedirectMatch 404 /package(-lock)?\.json$
+RedirectMatch 404 \.sh$
+
+# Phones should pick up new versions of the pages straight away.
+Header set Cache-Control "no-cache"

@@ -47,13 +47,9 @@ echo "== 3. Apache"
 BACKUP="$CONF.bak-$(date +%Y%m%d-%H%M%S)"
 sudo cp "$CONF" "$BACKUP"
 BLOCK=$(mktemp)
-{
-  echo "    # BEGIN doorcounter"
-  grep -vE '^\s*(#|$)' "$APP/deploy/apache-counter.conf"
-  echo "    # END doorcounter"
-} > "$BLOCK"
-# Remove the previous block (and the unmarked lines from older versions),
-# then insert the current one after the simplevote lines.
+grep -vE '^\s*(#|$)' "$APP/deploy/apache-counter.conf" > "$BLOCK"
+# Remove the previous doorcounter lines (including the marked block from an
+# older version), then insert the current ones after the simplevote lines.
 sudo sed -i -e '/# BEGIN doorcounter/,/# END doorcounter/d' -e '/doorcounter/d' "$CONF"
 sudo sed -i "\\|ProxyPassReverse \"/simplevote/\"|r $BLOCK" "$CONF"
 rm "$BLOCK"
@@ -62,7 +58,7 @@ if sudo cmp -s "$CONF" "$BACKUP"; then
   sudo rm "$BACKUP"
 else
   echo "Apache config updated, backup: $BACKUP"
-  if ! grep -q '# BEGIN doorcounter' "$CONF" || ! sudo apachectl configtest; then
+  if ! grep -q '/doorcounter/api' "$CONF" || ! sudo apachectl configtest; then
     echo "Apache config failed - restoring backup"
     sudo cp "$BACKUP" "$CONF"
     exit 1
