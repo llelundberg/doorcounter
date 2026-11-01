@@ -2,8 +2,8 @@
 
 A shared people counter for an event. Door staff open the counter page on their phones and tap **+** or **−**. Every device shows the same live number. An admin page sets or resets the counter, sets a capacity limit and shows a report of how many people were inside over time.
 
-- Counter: https://mumindalen.nu/doorcounter/
-- Admin: https://mumindalen.nu/doorcounter/admin/
+- Counter: `/doorcounter/`
+- Admin: `/doorcounter/admin/`
 
 No npm dependencies. Needs Node.js 16 or later.
 
