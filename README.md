@@ -39,27 +39,31 @@ On the admin page, **Rensa logg** renames the current log to `data/log-<time>.cs
 
 ## Deploy (Linux + Apache)
 
+Production: `ssh kalle@192.168.194.10`. The app lives in `/srv/www/mumindalen/doorcounter` and runs as user `kalle` on port 8083, the same way as simplevote (8082) and triangelspelet (8081).
+
 ```sh
-# 1. Install the app
-sudo useradd --system --no-create-home doorcounter
-sudo mkdir -p /opt/doorcounter
-sudo cp -r server.js config.js public /opt/doorcounter/
-sudo mkdir -p /opt/doorcounter/data
-sudo chown -R doorcounter:doorcounter /opt/doorcounter/data
+# 1. Install the app (as kalle)
+git clone https://github.com/llelundberg/doorcounter /srv/www/mumindalen/doorcounter
 
 # 2. systemd service
-sudo cp deploy/doorcounter.service /etc/systemd/system/
+sudo cp /srv/www/mumindalen/doorcounter/deploy/doorcounter.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now doorcounter
-sudo systemctl status doorcounter
+systemctl status doorcounter
 
 # 3. Apache reverse proxy
-sudo a2enmod proxy proxy_http
-#   paste deploy/apache-counter.conf into your site's <VirtualHost> block
+#   paste deploy/apache-counter.conf into the mumindalen.nu <VirtualHost *:443>
+#   block in /etc/apache2/sites-available/default.conf
 sudo apachectl configtest && sudo systemctl reload apache2
 ```
 
-If `node` is not at `/usr/bin/node`, change `ExecStart` in the service file (`which node`).
+### Updating
+
+```sh
+cd /srv/www/mumindalen/doorcounter && git pull && sudo systemctl restart doorcounter
+```
+
+The counter value survives restarts, because the server rebuilds it from `data/log.csv`. Phones reconnect within a few seconds.
 
 The app uses only relative URLs. To serve it under a path other than `/doorcounter/`, change only the Apache config.
 

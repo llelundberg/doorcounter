@@ -3,15 +3,13 @@ Description=DoorCounter - shared people counter
 After=network.target
 
 [Service]
-Type=simple
-User=doorcounter
-Group=doorcounter
-WorkingDirectory=/opt/doorcounter
-ExecStart=/usr/bin/node /opt/doorcounter/server.js
-Environment=PORT=3000
+ExecStart=/usr/bin/node /srv/www/mumindalen/doorcounter/server.js
+WorkingDirectory=/srv/www/mumindalen/doorcounter
+User=kalle
+Environment=PORT=8083
 Environment=HOST=127.0.0.1
 Restart=always
-RestartSec=2
+RestartSec=3
 
 [Install]
 WantedBy=multi-user.target

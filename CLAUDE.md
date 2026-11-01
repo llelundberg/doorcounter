@@ -32,4 +32,5 @@ curl -X POST -H 'Content-Type: application/json' -d '{"delta":1,"device":"x"}' l
 
 - **Relative URLs only** in `public/` (`api/...` on the counter page, `../api/...` in admin). The app is served under an Apache subpath, so absolute `/api` paths would break production. The server's directory redirect (`/admin` → `admin/`) is also relative for the same reason.
 - SSE through Apache needs `flushpackets=on` and no gzip (see `deploy/apache-counter.conf`). The server sends `X-Accel-Buffering: no` and a 15 s keep-alive ping; keep those if you touch `handleEvents`.
-- Deployment artifacts live in `deploy/`: a systemd unit (runs from `/opt/doorcounter` as user `doorcounter`) and the Apache snippet. `README.md` has the full install steps and the pre-event checklist.
+- Deployment artifacts live in `deploy/`: a systemd unit and the Apache snippet. `README.md` has the install and update steps and the pre-event checklist.
+- Production is `ssh kalle@192.168.194.10` (Ubuntu, Node 22). The app is a git clone at `/srv/www/mumindalen/doorcounter`, runs as `kalle` on port 8083, and the Apache lines sit inline in the mumindalen.nu vhost in `/etc/apache2/sites-available/default.conf`. Ports 8081 and 8082 belong to other apps. sudo needs a password, so it can't be run non-interactively over ssh.
